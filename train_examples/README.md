@@ -1,5 +1,5 @@
 
-## Tainging Example
+## Training Example
 
 ### 1. training example for sft or lora
 
@@ -20,7 +20,7 @@ You need to create a jsonl file with key-values in the table below:
 
 ```bash
 
-bash ./examples/sft/train.sh
+bash ./train_examples/sft/train.sh
 
 # All training setting in train_config.yaml
 
@@ -54,7 +54,7 @@ You need to create a txt file with key-values in the table below:
 
 ```bash
 
-bash ./examples/dpo/train.sh
+bash ./train_examples/dpo/train.sh
 
 # All training setting in train_config.yaml
 
@@ -87,7 +87,7 @@ You need to create a txt file with key-values in the table below:
 
 ```bash
 
-bash ./examples/edit/train.sh
+bash ./train_examples/edit/train.sh
 
 # All training setting in train_config.yaml
 

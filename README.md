@@ -351,7 +351,7 @@ The quantitative evaluation results on public benchmarks demonstrate LongCat-Ima
 
 We provide training code that enables advanced development of our LongCat‑Image‑Dev model, including SFT, LoRA, DPO, and Edit training.
 
-See [TRAINING.md](./examples/README.md) for detailed instructions.
+See [TRAINING.md](./train_examples/README.md) for detailed instructions.
 
 ## Community Works
 
