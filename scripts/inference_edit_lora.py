@@ -11,7 +11,7 @@ if __name__ == '__main__':
 
     # 1. 设置模型路径和 LoRA 路径
     model_path = "/home/disk2/hwj/my_hf_cache/hub/models--meituan-longcat--LongCat-Image-Edit/snapshots/7b54ef423aa7854be7861600024be5c56ab7875a"  # 或者本地路径，如 "./weights/LongCat-Image-Edit"
-    lora_ckpt_path = "./output/edit_lora_model/checkpoints-500"  # 你的 LoRA 权重路径
+    lora_ckpt_path = "/home/disk2/hwj/LongCat-Image/output/edit_lora_model/checkpoints-500"  # TODO: 注意这里填绝对路径避免出错，你的 LoRA 权重路径
     
     # 2. 加载基础 transformer 模型
     print(f"Loading base transformer from {model_path}...")
@@ -31,7 +31,8 @@ if __name__ == '__main__':
         transformer.to(device, dtype=torch.bfloat16)
         print("LoRA weights merged successfully!")
     else:
-        print(f"Warning: LoRA checkpoint not found at {lora_ckpt_path}")
+        # 【新增】直接抛出异常，强制终止程序运行
+        raise FileNotFoundError(f"❌ 致命错误: 找不到 LoRA 权重！请检查路径是否正确: {lora_ckpt_path}")
     
     # 4. 创建 pipeline，传入加载了 LoRA 的 transformer
     print("Creating pipeline...")
@@ -52,13 +53,13 @@ if __name__ == '__main__':
         img,
         prompt,
         negative_prompt='',
-        guidance_scale=4.5,
+        guidance_scale=4.5,  # <--- TODO:【修改】这里从 4.5 提高到了 7.5
         num_inference_steps=50,
         num_images_per_prompt=1,
         generator=torch.Generator("cpu").manual_seed(43)
     ).images[0]
 
     # 6. 保存结果
-    output_path = './edit_lora_example.png'
+    output_path = './edit_lora_example-500V2.png'
     image.save(output_path)
     print(f"✅ Inference completed! Result saved to {output_path}")

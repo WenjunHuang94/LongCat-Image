@@ -26,7 +26,7 @@ lora_rank: 32
 use_ema: False
 ema_rate: 0.999
 mixed_precision: 'bf16'
-max_train_steps: 500
+max_train_steps: 3000
 gradient_accumulation_steps: 1
 gradient_checkpointing: true
 gradient_clip: 1.0
