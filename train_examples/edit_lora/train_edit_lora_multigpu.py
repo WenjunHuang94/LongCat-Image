@@ -238,7 +238,7 @@ def main():
     num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
     # 7. optimizer & scheduler
-    if args.use_8bit_adam:
+    if getattr(args, "use_8bit_adam", False):
         try:
             import bitsandbytes as bnb
         except ImportError:

@@ -1,0 +1,1 @@
+{"img_path": "/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/data_example/result_images/image_000000.png", "ref_img_path": "/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/data_example/origin_images/image_000000.JPEG", "prompt": "Generate a realistic image based on the text description in the image", "width": 1024, "height": 1024}

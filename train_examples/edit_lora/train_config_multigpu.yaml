@@ -1,5 +1,5 @@
 # 1.Data setting
-data_txt_root: '/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/data_example/train_data_info.txt'  # data csv_filepath
+data_txt_root: '/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/data_example/train_data_info_multigpu.txt'  # data csv_filepath
 resolution: 1024
 aspect_ratio_type: 'mar_1024'  # data bucketing strategy, mar_256、mar_512、mar_1024
 null_text_ratio: 0.1
