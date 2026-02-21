@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="meituan-longcat/LongCat-Image-Edit",
+        default="/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image-Edit",
         help="Base LongCat-Image-Edit model path (HF repo or local directory).",
     )
     parser.add_argument(
