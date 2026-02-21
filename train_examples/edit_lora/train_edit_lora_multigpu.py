@@ -22,7 +22,6 @@ from longcat_image.models import LongCatImageTransformer2DModel
 from longcat_image.utils import LogBuffer
 from longcat_image.utils import pack_latents, unpack_latents, calculate_shift, prepare_pos_ids
 
-
 warnings.filterwarnings("ignore")
 
 current_file_path = Path(__file__).resolve()
@@ -148,22 +147,22 @@ def main():
         torch.manual_seed(args.seed)
         torch.cuda.manual_seed_all(args.seed)
 
-    # 选择精度
+    # 选择精度 (强制保持你需要的 bf16，V100 上 PyTorch 会走 CPU/软件模拟回退)
     weight_dtype = torch.bfloat16 if args.mixed_precision == "bf16" else torch.float32
     logger.info(f"Using weight_dtype = {weight_dtype}")
 
-    # 1. 加载基础 transformer（在 CPU 上）
+    # 1. 加载基础 transformer（在 CPU 上加载，避免 OOM）
     if args.diffusion_pretrain_weight:
         transformer = LongCatImageTransformer2DModel.from_pretrained(
             args.diffusion_pretrain_weight,
-            torch_dtype=weight_dtype,  # <--- 新增
+            torch_dtype=weight_dtype,
             ignore_mismatched_sizes=False
         )
         logger.info(f"Loaded transformer from diffusion_pretrain_weight = {args.diffusion_pretrain_weight}")
     else:
         transformer = LongCatImageTransformer2DModel.from_pretrained(
             os.path.join(args.pretrained_model_name_or_path, "transformer"),
-            torch_dtype=weight_dtype,  # <--- 新增
+            torch_dtype=weight_dtype,
             ignore_mismatched_sizes=False
         )
         logger.info(f"Loaded transformer from {args.pretrained_model_name_or_path + '/transformer'}")
@@ -195,14 +194,14 @@ def main():
         use_rslora=False,
     )
     transformer_mp = get_peft_model(transformer_mp, lora_config)
-    # <--- 新增：强制把模型（包含新加的 LoRA 参数）全部转为 bfloat16
+    # 强制把模型（包含新加的 LoRA 参数）全部转为 bfloat16
     transformer_mp = transformer_mp.to(dtype=weight_dtype)
     transformer_mp.print_trainable_parameters()
 
     total_trainable_params = sum(p.numel() for p in transformer_mp.parameters() if p.requires_grad)
     logger.info(f">>>>>> total_trainable_params: {total_trainable_params}")
 
-    if args.gradient_checkpointing:
+    if getattr(args, "gradient_checkpointing", False):
         transformer_mp.enable_gradient_checkpointing()
 
     # 4. 加载 VAE & 文本编码器（放到 cuda:0）
@@ -240,7 +239,7 @@ def main():
 
     # 6. dataloader
     train_dataloader = build_dataloader(args, args.data_txt_root, tokenizer, text_processor, args.resolution)
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / getattr(args, "gradient_accumulation_steps", 1))
     num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
     # 7. optimizer & scheduler
@@ -260,6 +259,7 @@ def main():
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
+        foreach=False  # 【关键修复】多卡下必须关闭 foreach，否则跨设备参数分块更新会报错
     )
 
     lr_scheduler = get_scheduler(
@@ -275,12 +275,14 @@ def main():
     global_step = 0
     log_buffer = LogBuffer()
     last_tic = time.time()
+    grad_acc_steps = getattr(args, "gradient_accumulation_steps", 1)
 
     logger.info("***** Running multi-GPU LoRA training *****")
     logger.info(f"  Num examples = {len(train_dataloader.dataset)}")
     logger.info(f"  Num batches each epoch = {len(train_dataloader)}")
     logger.info(f"  Num Epochs = {num_train_epochs}")
     logger.info(f"  Train batch size = {args.train_batch_size}")
+    logger.info(f"  Gradient Accumulation steps = {grad_acc_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
 
     for epoch in range(num_train_epochs):
@@ -322,14 +324,12 @@ def main():
 
             prompt_embeds = prompt_embeds.to(weight_dtype)
             prompt_embeds = prompt_embeds[
-                :, args.prompt_template_encode_start_idx : -args.prompt_template_encode_end_idx, :
-            ]
-
-            optimizer.zero_grad()
+                            :, args.prompt_template_encode_start_idx: -args.prompt_template_encode_end_idx, :
+                            ]
 
             # loRA 训练核心
             sigmas = torch.sigmoid(torch.randn((latents.shape[0],), device="cuda:0", dtype=latents.dtype))
-            if args.use_dynamic_shifting:
+            if getattr(args, "use_dynamic_shifting", False):
                 sigmas = noise_scheduler.time_shift(mu, 1.0, sigmas)
 
             timesteps = sigmas * 1000.0
@@ -364,6 +364,7 @@ def main():
                 height=latents.shape[2] // 2,
                 width=latents.shape[3] // 2,
             ).to("cuda:0", dtype=torch.float64)
+
             img_ids_ref = prepare_pos_ids(
                 modality_id=2,
                 type="image",
@@ -384,7 +385,8 @@ def main():
             img_ids = torch.cat([img_ids, img_ids_ref], dim=0)
             latent_model_input = torch.cat([packed_noisy_latents, packed_ref_latents], dim=1).to(weight_dtype)
 
-            with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.FLASH_ATTENTION):
+            # 【关键修复】放宽 SDPA 后端要求，允许 PyTorch 自行调度（V100 会自动 fallback 到支持的模型，避免 FlashAttention 报错）
+            with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=True):
                 model_pred = transformer_mp(
                     latent_model_input,
                     prompt_embeds,
@@ -403,54 +405,63 @@ def main():
                 vae_scale_factor=16,
             )
 
+            # 【关键修复】由于 model_pred 此时在最后一张显卡上，需要将 target 同步到它的 device 才能计算 loss
             target = noise - latents
+            target = target.to(model_pred.device)
+
+            # 加入梯度累加除法
             loss = torch.mean(
                 ((model_pred.float() - target.float()) ** 2).reshape(target.shape[0], -1),
                 1,
-            ).mean()
+            ).mean() / grad_acc_steps
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(params_to_optimize, 1.0)
-            optimizer.step()
-            lr_scheduler.step()
 
-            lr = lr_scheduler.get_last_lr()[0]
+            # 【关键修复】手动管理梯度累加逻辑
+            if (step + 1) % grad_acc_steps == 0:
+                torch.nn.utils.clip_grad_norm_(params_to_optimize, getattr(args, "gradient_clip", 1.0))
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad(set_to_none=True)
 
-            bsz, ic, ih, iw = image.shape
-            logs = {"loss": loss.detach().item(), "aspect_ratio": (ih * 1.0 / iw)}
-            logs["lr"] = lr
+                lr = lr_scheduler.get_last_lr()[0]
+                bsz, ic, ih, iw = image.shape
+                logs = {"loss": (loss * grad_acc_steps).detach().item(),
+                        "aspect_ratio": (ih * 1.0 / iw)}  # 还原打印时的真实loss
+                logs["lr"] = lr
 
-            log_buffer.update(logs)
-            if (step + 1) % args.log_interval == 0 or (step + 1) == 1:
-                t = (time.time() - last_tic) / args.log_interval
-                t_d = data_time_all / args.log_interval
+                log_buffer.update(logs)
+                if ((global_step + 1) % args.log_interval == 0) or (global_step == 0):
+                    t = (time.time() - last_tic) / args.log_interval
+                    t_d = data_time_all / args.log_interval
 
-                log_buffer.average()
-                info = (
-                    f"Step={step+1}, Epoch={epoch}, global_step={global_step}, "
-                    f"time_all:{t:.3f}, time_data:{t_d:.3f}, lr:{lr:.3e}, "
-                    f"s:(ch:{latents.shape[1]},h:{latents.shape[2]},w:{latents.shape[3]}), "
-                )
-                info += ", ".join([f"{k}:{v:.4f}" for k, v in log_buffer.output.items()])
-                logger.info(info)
-                last_tic = time.time()
-                log_buffer.clear()
-                data_time_all = 0
+                    log_buffer.average()
+                    info = (
+                        f"Step={global_step + 1}, Epoch={epoch}, "
+                        f"time_all:{t:.3f}, time_data:{t_d:.3f}, lr:{lr:.3e}, "
+                        f"s:(ch:{latents.shape[1]},h:{latents.shape[2]},w:{latents.shape[3]}), "
+                    )
+                    info += ", ".join([f"{k}:{v:.4f}" for k, v in log_buffer.output.items()])
+                    logger.info(info)
 
-            global_step += 1
+                    last_tic = time.time()
+                    log_buffer.clear()
+                    data_time_all = 0
+
+                global_step += 1
+
+                if global_step != 0 and global_step % args.save_model_steps == 0:
+                    os.umask(0o000)
+                    cur_lora_ckpt_save_dir = f"{args.work_dir}/checkpoints-{global_step}"
+                    os.makedirs(cur_lora_ckpt_save_dir, exist_ok=True)
+                    # transformer_mp 是 PeftModel，可以直接 save_pretrained
+                    transformer_mp.save_pretrained(cur_lora_ckpt_save_dir)
+                    logger.info(f"Saved multi-GPU LoRA checkpoint to {cur_lora_ckpt_save_dir}")
+
             data_time_start = time.time()
-
-            if global_step != 0 and global_step % args.save_model_steps == 0:
-                os.umask(0o000)
-                cur_lora_ckpt_save_dir = f"{args.work_dir}/checkpoints-{global_step}"
-                os.makedirs(cur_lora_ckpt_save_dir, exist_ok=True)
-                # transformer_mp 是 PeftModel，多卡分片也可以直接 save_pretrained
-                transformer_mp.save_pretrained(cur_lora_ckpt_save_dir)
-                logger.info(f"Saved multi-GPU LoRA checkpoint to {cur_lora_ckpt_save_dir}")
 
     logger.info("Training completed.")
 
 
 if __name__ == "__main__":
     main()
-
