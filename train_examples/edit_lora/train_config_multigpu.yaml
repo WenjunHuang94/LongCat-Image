@@ -1,7 +1,7 @@
 # 1.Data setting
 data_txt_root: '/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/data_example/train_data_info_multigpu.txt'  # data csv_filepath
-resolution: 1024
-aspect_ratio_type: 'mar_1024'  # data bucketing strategy, mar_256、mar_512、mar_1024
+resolution: 512
+aspect_ratio_type: 'mar_512'  # data bucketing strategy, mar_256、mar_512、mar_1024
 null_text_ratio: 0.1
 dataloader_num_workers: 1
 train_batch_size: 1
@@ -26,7 +26,7 @@ lora_rank: 32
 use_ema: False
 ema_rate: 0.999
 mixed_precision: 'bf16'
-max_train_steps: 3100
+max_train_steps: 5
 gradient_accumulation_steps: 1
 gradient_checkpointing: true
 gradient_clip: 1.0
@@ -41,7 +41,7 @@ lr_scheduler: 'constant'
 lr_warmup_steps: 0
 
 #4. Log setting
-log_interval: 10
-save_model_steps: 100
+log_interval: 1
+save_model_steps: 2
 work_dir: 'output/edit_lora_model'
 seed: 43
