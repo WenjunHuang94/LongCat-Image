@@ -155,12 +155,16 @@ def main():
     # 1. 加载基础 transformer（在 CPU 上）
     if args.diffusion_pretrain_weight:
         transformer = LongCatImageTransformer2DModel.from_pretrained(
-            args.diffusion_pretrain_weight, ignore_mismatched_sizes=False
+            args.diffusion_pretrain_weight,
+            torch_dtype=weight_dtype,  # <--- 新增
+            ignore_mismatched_sizes=False
         )
         logger.info(f"Loaded transformer from diffusion_pretrain_weight = {args.diffusion_pretrain_weight}")
     else:
         transformer = LongCatImageTransformer2DModel.from_pretrained(
-            os.path.join(args.pretrained_model_name_or_path, "transformer"), ignore_mismatched_sizes=False
+            os.path.join(args.pretrained_model_name_or_path, "transformer"),
+            torch_dtype=weight_dtype,  # <--- 新增
+            ignore_mismatched_sizes=False
         )
         logger.info(f"Loaded transformer from {args.pretrained_model_name_or_path + '/transformer'}")
 
@@ -191,6 +195,8 @@ def main():
         use_rslora=False,
     )
     transformer_mp = get_peft_model(transformer_mp, lora_config)
+    # <--- 新增：强制把模型（包含新加的 LoRA 参数）全部转为 bfloat16
+    transformer_mp = transformer_mp.to(dtype=weight_dtype)
     transformer_mp.print_trainable_parameters()
 
     total_trainable_params = sum(p.numel() for p in transformer_mp.parameters() if p.requires_grad)
