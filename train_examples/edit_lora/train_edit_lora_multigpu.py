@@ -15,6 +15,7 @@ from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.models import AutoencoderKL
 from diffusers.optimization import get_scheduler
 from peft import LoraConfig, get_peft_model
+import transformers  # <--- 【新增这行】导入 transformers 模块本身
 from transformers import AutoTokenizer, AutoModel, AutoProcessor
 
 from train_dataset import build_dataloader
@@ -23,6 +24,7 @@ from longcat_image.utils import LogBuffer
 from longcat_image.utils import pack_latents, unpack_latents, calculate_shift, prepare_pos_ids
 
 warnings.filterwarnings("ignore")
+transformers.logging.set_verbosity_error()  # <--- 【新增这行】把 transformers 的日志级别设为 Error
 
 current_file_path = Path(__file__).resolve()
 sys.path.insert(0, str(current_file_path.parent.parent))

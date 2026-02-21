@@ -22,7 +22,7 @@ def parse_args():
     parser.add_argument(
         "--lora_path",
         type=str,
-        default="",
+        default="/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/output/edit_lora_model/checkpoints-100",
         help="LoRA checkpoint directory (e.g. output/edit_lora_model/checkpoints-500). Leave empty to disable LoRA.",
     )
 
