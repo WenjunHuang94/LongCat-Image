@@ -22,7 +22,7 @@ def parse_args():
     parser.add_argument(
         "--lora_path",
         type=str,
-        default="/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/output/edit_lora_model/checkpoints-100",
+        default="/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/output/edit_lora_model/checkpoints-3000",
         help="LoRA checkpoint directory (e.g. output/edit_lora_model/checkpoints-500). Leave empty to disable LoRA.",
     )
 
@@ -30,13 +30,13 @@ def parse_args():
     parser.add_argument(
         "--input_image",
         type=str,
-        default="assets/test.png",
+        default="data_example/origin_images/image_000000.JPEG",
         help="Input image path for editing.",
     )
     parser.add_argument(
         "--prompt",
         type=str,
-        default="将猫变成狗",
+        default="Generate a realistic image based on the text description in the image",
         help="Edit instruction prompt.",
     )
     parser.add_argument(
@@ -48,7 +48,7 @@ def parse_args():
     parser.add_argument(
         "--output_image",
         type=str,
-        default="edit_lora_multigpu.png",
+        default="edit_lora_multigpu-3000pt.png",
         help="Output image path.",
     )
 
