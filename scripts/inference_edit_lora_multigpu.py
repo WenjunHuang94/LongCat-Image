@@ -22,7 +22,7 @@ def parse_args():
     parser.add_argument(
         "--lora_path",
         type=str,
-        default="/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/output/edit_lora_model/checkpoints-3000",
+        default="/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/output/edit_lora_model-20260222V2/checkpoints-750/",
         help="LoRA checkpoint directory (e.g. output/edit_lora_model/checkpoints-500). Leave empty to disable LoRA.",
     )
 
@@ -30,7 +30,7 @@ def parse_args():
     parser.add_argument(
         "--input_image",
         type=str,
-        default="data_example/origin_images/image_000000.JPEG",
+        default="image_004999.JPEG",
         help="Input image path for editing.",
     )
     parser.add_argument(
@@ -48,7 +48,7 @@ def parse_args():
     parser.add_argument(
         "--output_image",
         type=str,
-        default="edit_lora_multigpu-3000pt.png",
+        default="edit_lora_multigpu-20260223.png",
         help="Output image path.",
     )
 
