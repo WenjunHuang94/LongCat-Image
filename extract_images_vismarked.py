@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 # ================= 1. 配置区 =================
 # 你现有的 8 个子文件夹所在的根目录
-BASE_DATA_DIR = "/storage/v-jinpewang/lab_folder/junchao/data/image_eidt_dataset/"
+BASE_DATA_DIR = "/storage/v-jinpewang/lab_folder/junchao/data/image_eidt_dataset/processed_data_vismarker"
 
 # 需要遍历的数据集列表
 DATASETS = [
