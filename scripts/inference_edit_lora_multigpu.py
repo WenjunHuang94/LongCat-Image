@@ -30,7 +30,7 @@ def parse_args():
     parser.add_argument(
         "--input_image",
         type=str,
-        default="image_004999.JPEG",
+        default="text-to-image-2M-export_4000/origin_images/image_000000.JPEG",
         help="Input image path for editing.",
     )
     parser.add_argument(
@@ -48,7 +48,7 @@ def parse_args():
     parser.add_argument(
         "--output_image",
         type=str,
-        default="edit_lora_multigpu-20260223.png",
+        default="image_000000-res.png",
         help="Output image path.",
     )
 
