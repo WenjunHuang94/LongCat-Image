@@ -96,35 +96,58 @@ def main():
             print(f"  ❌ 错误：找不到对应的 input 或 output 文件夹，已跳过。")
             continue
 
-        # 收集文件列表
-        input_files = {f for f in os.listdir(source_input_dir) if not f.startswith('.')}
-        output_files = {f for f in os.listdir(source_output_dir) if not f.startswith('.')}
+        # 【核心修改】构建字典映射：{纯文件名: 完整文件名(带后缀)}
+        input_mapping = {}
+        for f in os.listdir(source_input_dir):
+            if not f.startswith('.'):
+                basename, _ = os.path.splitext(f)
+                input_mapping[basename] = f
 
-        # 检查是否 1:1 一一对应
-        matched_files = input_files.intersection(output_files)
-        unmatched_inputs = input_files - output_files
-        unmatched_outputs = output_files - input_files
+        output_mapping = {}
+        for f in os.listdir(source_output_dir):
+            if not f.startswith('.'):
+                basename, _ = os.path.splitext(f)
+                output_mapping[basename] = f
+
+        # 提取所有的纯文件名 (keys)
+        input_basenames = set(input_mapping.keys())
+        output_basenames = set(output_mapping.keys())
+
+        # 检查纯文件名是否 1:1 一一对应
+        matched_basenames = input_basenames.intersection(output_basenames)
+        unmatched_inputs = input_basenames - output_basenames
+        unmatched_outputs = output_basenames - input_basenames
 
         if unmatched_inputs or unmatched_outputs:
-            print(f"  ⚠️ 警告：发现未配对的文件！")
+            print(f"  ⚠️ 警告：发现未配对的文件！(忽略后缀名差异后)")
             print(f"     缺少 Output 的 Input 文件数: {len(unmatched_inputs)}")
             print(f"     缺少 Input 的 Output 文件数: {len(unmatched_outputs)}")
 
-        print(f"  ✅ 完美匹配数量: {len(matched_files)}")
+        print(f"  ✅ 完美匹配数量: {len(matched_basenames)}")
 
         # 设定固定随机种子（保证生成的 prompt 具有可复现性）
         random.seed(42)
 
         # 复制文件并生成标注
-        for filename in tqdm(matched_files, desc=f"  打包 {task_type}", leave=False):
-            # 原始路径
-            src_in = os.path.join(source_input_dir, filename)
-            src_out = os.path.join(source_output_dir, filename)
+        for basename in tqdm(matched_basenames, desc=f"  打包 {task_type}", leave=False):
+            # 通过纯文件名，去字典里把带各自后缀的完整文件名拿出来
+            in_filename = input_mapping[basename]
+            out_filename = output_mapping[basename]
 
-            # 强力防重名机制：加上 task_type 前缀 (例如 generate_001.png)
-            safe_filename = f"{task_type}_{filename}"
-            dst_in = os.path.join(TARGET_INPUT_DIR, safe_filename)
-            dst_out = os.path.join(TARGET_OUTPUT_DIR, safe_filename)
+            # 原始路径
+            src_in = os.path.join(source_input_dir, in_filename)
+            src_out = os.path.join(source_output_dir, out_filename)
+
+            # 获取各自的原有后缀
+            _, in_ext = os.path.splitext(in_filename)
+            _, out_ext = os.path.splitext(out_filename)
+
+            # 强力防重名机制：加上 task_type 前缀，并保留各自原本的扩展名
+            safe_in_filename = f"{task_type}_{basename}{in_ext}"
+            safe_out_filename = f"{task_type}_{basename}{out_ext}"
+
+            dst_in = os.path.join(TARGET_INPUT_DIR, safe_in_filename)
+            dst_out = os.path.join(TARGET_OUTPUT_DIR, safe_out_filename)
 
             # 复制
             shutil.copy2(src_in, dst_in)
@@ -138,7 +161,6 @@ def main():
             prompt = random.choice(PROMPTS[task_type])
 
             # 构建标准的 jsonl 行 (与 Diffusers/LongCat 要求一致)
-            # 注意：img_path 是生成的图(output), ref_img_path 是条件原图(input)
             info_dict = {
                 "img_path": dst_out,
                 "ref_img_path": dst_in,
