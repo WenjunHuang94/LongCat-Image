@@ -13,5 +13,5 @@ echo "script_dir: ${script_dir}"
 
 # 4. 直接用 python 运行！不需要 accelerate launch
 python ${script_dir}/train_edit_lora_multigpu.py \
-    --config ${script_dir}/train_config_multigpu.yaml \
+    --config ${script_dir}/train_config_multigpuV2.yaml \
     --num_gpus 8
