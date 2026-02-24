@@ -208,6 +208,42 @@ def main():
     if getattr(args, "gradient_checkpointing", False):
         transformer_mp.enable_gradient_checkpointing()
 
+    # ==========================================================
+    # 【核心修复】：手动加载 Stage 1 的认字记忆 (Resume Checkpoint)
+    # ==========================================================
+    global_step = 0  # 提前初始化全局步数
+    if getattr(args, "resume_from_checkpoint", None) and str(args.resume_from_checkpoint).lower() != "none":
+        resume_path = args.resume_from_checkpoint
+        if os.path.exists(resume_path):
+            logger.info(f"🚀 正在从 {resume_path} 恢复 LoRA 权重...")
+            safetensors_path = os.path.join(resume_path, "adapter_model.safetensors")
+            bin_path = os.path.join(resume_path, "adapter_model.bin")
+
+            from peft import set_peft_model_state_dict
+            if os.path.exists(safetensors_path):
+                from safetensors.torch import load_file
+                state_dict = load_file(safetensors_path)
+            elif os.path.exists(bin_path):
+                state_dict = torch.load(bin_path, map_location="cpu")
+            else:
+                raise FileNotFoundError(f"❌ 在 {resume_path} 下找不到 adapter_model.safetensors 或 .bin")
+
+            # 将上一阶段的权重强行注入到当前的 LoRA 层中
+            set_peft_model_state_dict(transformer_mp, state_dict)
+            logger.info("✅ 成功继承上一阶段的认字记忆！")
+
+            # 解析当前的 global_step，防止新保存的 checkpoint 覆盖旧的序号
+            try:
+                basename = os.path.basename(os.path.normpath(resume_path))
+                if "-" in basename:
+                    global_step = int(basename.split("-")[-1])
+                    logger.info(f"✅ 继承训练步数: global_step = {global_step}")
+            except Exception as e:
+                logger.warning(f"⚠️ 无法解析步数，将从 global_step=0 开始: {e}")
+        else:
+            logger.warning(f"⚠️ 找不到路径 {resume_path}，将从头开始完全白板训练！")
+    # ==========================================================
+
     # 4. 加载 VAE & 文本编码器（放到 cuda:0）
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="vae", torch_dtype=weight_dtype

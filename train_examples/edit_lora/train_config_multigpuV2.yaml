@@ -20,7 +20,7 @@ use_dynamic_shifting: true
 
 # 【至关重要的一步：继承 Stage 1 的认字记忆】
 # 请把这里改成你之前跑出来的、表现最好的那个 checkpoing 绝对路径！
-resume_from_checkpoint: '/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/output/checkpoint-3000/'
+resume_from_checkpoint: '/storage/v-jinpewang/az_workspace/wenjun/LongCat-Image/output/checkpoint-2400/'
 
 # 3. Training setting
 lora_rank: 64
@@ -29,7 +29,7 @@ ema_rate: 0.999
 mixed_precision: 'bf16'
 
 # 【步数与学习率调整】
-max_train_steps: 12500
+max_train_steps: 14900
 gradient_accumulation_steps: 8
 gradient_checkpointing: true
 gradient_clip: 1.0
