@@ -2,12 +2,13 @@ import os
 import sys
 import time
 import warnings
-
 import argparse
 import yaml
 import torch
 import math
 import logging
+import datetime  # <--- 【新增】用于生成带时间的 run_name
+import wandb  # <--- 【新增】导入 wandb
 import transformers
 import diffusers
 from pathlib import Path
@@ -28,7 +29,6 @@ from longcat_image.models import LongCatImageTransformer2DModel
 from longcat_image.utils import LogBuffer
 from longcat_image.utils import pack_latents, unpack_latents, calculate_shift, prepare_pos_ids
 
-
 warnings.filterwarnings("ignore")  # ignore warning
 
 current_file_path = Path(__file__).resolve()
@@ -36,13 +36,11 @@ sys.path.insert(0, str(current_file_path.parent.parent))
 
 logger = get_logger(__name__)
 
-def train(global_step=0):
 
-    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    
+def train(global_step=0):
     # Train!
     total_batch_size = args.train_batch_size * \
-        accelerator.num_processes * args.gradient_accumulation_steps
+                       accelerator.num_processes * args.gradient_accumulation_steps
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataloader.dataset)}")
@@ -54,6 +52,13 @@ def train(global_step=0):
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
 
     last_tic = time.time()
+
+    # ==========================================================
+    # 【新增】EMA Loss 和 Best Loss 的状态变量
+    # ==========================================================
+    ema_loss = None
+    ema_decay = 0.99
+    best_loss = float('inf')
 
     # Now you train the model
     for epoch in range(first_epoch, args.num_train_epochs + 1):
@@ -91,14 +96,12 @@ def train(global_step=0):
                 prompt_embeds = text_output.hidden_states[-1].clone().detach()
 
             prompt_embeds = prompt_embeds.to(weight_dtype)
-            prompt_embeds = prompt_embeds[:,args.prompt_template_encode_start_idx: -args.prompt_template_encode_end_idx ,:]
+            prompt_embeds = prompt_embeds[:,
+                            args.prompt_template_encode_start_idx: -args.prompt_template_encode_end_idx, :]
 
-            # Sample a random timestep for each image
             grad_norm = None
             with accelerator.accumulate(transformer):
-                # Predict the noise residual
                 optimizer.zero_grad()
-                # logit-normal
                 sigmas = torch.sigmoid(torch.randn((latents.shape[0],), device=accelerator.device, dtype=latents.dtype))
 
                 if args.use_dynamic_shifting:
@@ -119,7 +122,7 @@ def train(global_step=0):
                     height=latents.shape[2],
                     width=latents.shape[3],
                 )
-                
+
                 packed_ref_latents = pack_latents(
                     ref_latents,
                     batch_size=ref_latents.shape[0],
@@ -132,19 +135,20 @@ def train(global_step=0):
                 img_ids = prepare_pos_ids(modality_id=1,
                                           type='image',
                                           start=(prompt_embeds.shape[1], prompt_embeds.shape[1]),
-                                          height=latents.shape[2]//2,
-                                          width=latents.shape[3]//2).to(accelerator.device, dtype=torch.float64)
+                                          height=latents.shape[2] // 2,
+                                          width=latents.shape[3] // 2).to(accelerator.device, dtype=torch.float64)
                 img_ids_ref = prepare_pos_ids(modality_id=2,
-                                          type='image',
-                                          start=(prompt_embeds.shape[1], prompt_embeds.shape[1]),
-                                          height=ref_latents.shape[2]//2,
-                                          width=ref_latents.shape[3]//2).to(accelerator.device, dtype=torch.float64)
+                                              type='image',
+                                              start=(prompt_embeds.shape[1], prompt_embeds.shape[1]),
+                                              height=ref_latents.shape[2] // 2,
+                                              width=ref_latents.shape[3] // 2).to(accelerator.device,
+                                                                                  dtype=torch.float64)
 
                 timesteps = (
-                    torch.tensor(timesteps)
-                    .expand(noisy_latents.shape[0])
-                    .to(device=accelerator.device)
-                    / 1000
+                        torch.tensor(timesteps)
+                        .expand(noisy_latents.shape[0])
+                        .to(device=accelerator.device)
+                        / 1000
                 )
                 text_ids = prepare_pos_ids(modality_id=0,
                                            type='text',
@@ -179,7 +183,7 @@ def train(global_step=0):
                     grad_norm = transformer.get_global_grad_norm()
 
                 optimizer.step()
-                if not accelerator.optimizer_step_was_skipped:  
+                if not accelerator.optimizer_step_was_skipped:
                     lr_scheduler.step()
 
                 if accelerator.sync_gradients and args.use_ema:
@@ -189,7 +193,32 @@ def train(global_step=0):
 
             if accelerator.sync_gradients:
                 bsz, ic, ih, iw = image.shape
-                logs = {"loss": accelerator.gather(loss).mean().item(), 'aspect_ratio': (ih*1.0 / iw)}
+
+                # ==========================================================
+                # 【新增】Wandb 核心记录逻辑 (仅在主进程中执行，防止多卡冲突)
+                # ==========================================================
+                current_true_loss = accelerator.gather(loss).mean().item()
+
+                if accelerator.is_main_process:
+                    if ema_loss is None:
+                        ema_loss = current_true_loss
+                    else:
+                        ema_loss = ema_decay * ema_loss + (1 - ema_decay) * current_true_loss
+
+                    if current_true_loss < best_loss:
+                        best_loss = current_true_loss
+
+                    wandb.log({
+                        "global_step": global_step,
+                        "train_loss": current_true_loss,
+                        "train_loss_ema": ema_loss,
+                        "best_loss": best_loss,
+                        "lr": lr,
+                        "epoch": epoch
+                    })
+                # ==========================================================
+
+                logs = {"loss": current_true_loss, 'aspect_ratio': (ih * 1.0 / iw)}
                 if grad_norm is not None:
                     logs.update(grad_norm=accelerator.gather(grad_norm).mean().item())
 
@@ -199,12 +228,14 @@ def train(global_step=0):
                     t_d = data_time_all / args.log_interval
 
                     log_buffer.average()
-                    info = f"Step={step+1}, Epoch={epoch}, global_step={global_step}, time_all:{t:.3f}, time_data:{t_d:.3f}, lr:{lr:.3e}, s:(ch:{latents.shape[1]},h:{latents.shape[2]},w:{latents.shape[3]}), "
-                    info += ', '.join([f"{k}:{v:.4f}" for k,v in log_buffer.output.items()])
+                    info = f"Step={step + 1}, Epoch={epoch}, global_step={global_step}, time_all:{t:.3f}, time_data:{t_d:.3f}, lr:{lr:.3e}, s:(ch:{latents.shape[1]},h:{latents.shape[2]},w:{latents.shape[3]}), "
+                    info += ', '.join([f"{k}:{v:.4f}" for k, v in log_buffer.output.items()])
                     logger.info(info)
                     last_tic = time.time()
                     log_buffer.clear()
                     data_time_all = 0
+
+                # 依然保留 accelerate 自身的日志记录以防不时之需
                 logs.update(lr=lr)
                 accelerator.log(logs, step=global_step)
                 global_step += 1
@@ -226,7 +257,11 @@ def train(global_step=0):
 
             if global_step >= args.max_train_steps:
                 break
-        
+
+    # 【新增】训练结束关闭 wandb
+    if accelerator.is_main_process:
+        wandb.finish()
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Process some integers.")
@@ -283,7 +318,7 @@ if __name__ == '__main__':
         mixed_precision=args.mixed_precision,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         log_with=args.report_to,
-        project_config= accelerator_project_config,
+        project_config=accelerator_project_config,
     )
 
     # Make one log on every process with the configuration for debugging.
@@ -313,33 +348,33 @@ if __name__ == '__main__':
     logger.info(f'using weight_dtype {weight_dtype}!!!')
 
     if args.diffusion_pretrain_weight:
-        transformer = LongCatImageTransformer2DModel.from_pretrained(args.diffusion_pretrain_weight, ignore_mismatched_sizes=False)
+        transformer = LongCatImageTransformer2DModel.from_pretrained(args.diffusion_pretrain_weight,
+                                                                     ignore_mismatched_sizes=False)
         logger.info(f'successful load model weight {args.diffusion_pretrain_weight}!!!')
     else:
-        transformer = LongCatImageTransformer2DModel.from_pretrained(os.path.join(args.pretrained_model_name_or_path, "transformer"), ignore_mismatched_sizes=False)
-        logger.info(f'successful load model weight {args.pretrained_model_name_or_path+"/transformer"}!!!')
+        transformer = LongCatImageTransformer2DModel.from_pretrained(
+            os.path.join(args.pretrained_model_name_or_path, "transformer"), ignore_mismatched_sizes=False)
+        logger.info(f'successful load model weight {args.pretrained_model_name_or_path + "/transformer"}!!!')
 
-    #transformer = transformer.train()
-    
     target_modules = [
-            "attn.to_k",
-            "attn.to_q",
-            "attn.to_v",
-            "attn.to_out.0",
-            "attn.add_k_proj",
-            "attn.add_q_proj",
-            "attn.add_v_proj",
-            "attn.to_add_out",
-            "ff.net.0.proj",
-            "ff.net.2",
-            "ff_context.net.0.proj",
-            "ff_context.net.2",
-        ]
+        "attn.to_k",
+        "attn.to_q",
+        "attn.to_v",
+        "attn.to_out.0",
+        "attn.add_k_proj",
+        "attn.add_q_proj",
+        "attn.add_v_proj",
+        "attn.to_add_out",
+        "ff.net.0.proj",
+        "ff.net.2",
+        "ff_context.net.0.proj",
+        "ff_context.net.2",
+    ]
 
     lora_config = LoraConfig(
         r=args.lora_rank,
         init_lora_weights="gaussian",
-        target_modules= target_modules ,
+        target_modules=target_modules,
         use_dora=False,
         use_rslora=False
     )
@@ -356,14 +391,15 @@ if __name__ == '__main__':
 
     vae_dtype = torch.float32
     vae = AutoencoderKL.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="vae",  torch_dtype=weight_dtype).cuda().eval()
+        args.pretrained_model_name_or_path, subfolder="vae", torch_dtype=weight_dtype).cuda().eval()
 
     text_encoder = AutoModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder" , torch_dtype=weight_dtype, trust_remote_code=True).cuda().eval()
+        args.pretrained_model_name_or_path, subfolder="text_encoder", torch_dtype=weight_dtype,
+        trust_remote_code=True).cuda().eval()
     tokenizer = AutoTokenizer.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="tokenizer" , torch_dtype=weight_dtype, trust_remote_code=True)
+        args.pretrained_model_name_or_path, subfolder="tokenizer", torch_dtype=weight_dtype, trust_remote_code=True)
     text_processor = AutoProcessor.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="tokenizer" , torch_dtype=weight_dtype, trust_remote_code=True)
+        args.pretrained_model_name_or_path, subfolder="tokenizer", torch_dtype=weight_dtype, trust_remote_code=True)
     logger.info("all models loaded successfully")
 
     # build models
@@ -372,12 +408,13 @@ if __name__ == '__main__':
 
     latent_size = int(args.resolution) // 8
     mu = calculate_shift(
-        (latent_size//2)**2,
+        (latent_size // 2) ** 2,
         noise_scheduler.config.base_image_seq_len,
         noise_scheduler.config.max_image_seq_len,
         noise_scheduler.config.base_shift,
         noise_scheduler.config.max_shift,
     )
+
 
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
     def save_model_hook(models, weights, output_dir):
@@ -387,16 +424,16 @@ if __name__ == '__main__':
                 if len(weights) != 0:
                     weights.pop()
 
+
     def load_model_hook(models, input_dir):
         while len(models) > 0:
-            # pop models so that they are not loaded again
             model = models.pop()
-            # load diffusers style into model
             load_model = LongCatImageTransformer2DModel.from_pretrained(
                 input_dir, subfolder="transformer")
             model.register_to_config(**load_model.config)
             model.load_state_dict(load_model.state_dict())
             del load_model
+
 
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
@@ -404,12 +441,9 @@ if __name__ == '__main__':
     if args.gradient_checkpointing:
         transformer.enable_gradient_checkpointing()
 
-    # Enable TF32 for faster training on Ampere GPUs,
-    # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     if args.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Use 8-bit Adam for lower memory usage or to fine-tune the model in 16GB GPUs
     if args.use_8bit_adam:
         try:
             import bitsandbytes as bnb
@@ -434,7 +468,7 @@ if __name__ == '__main__':
     if args.use_ema:
         model_ema.to(accelerator.device, dtype=weight_dtype)
 
-    train_dataloader = build_dataloader(args, args.data_txt_root, tokenizer, text_processor,args.resolution,)
+    train_dataloader = build_dataloader(args, args.data_txt_root, tokenizer, text_processor, args.resolution, )
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
@@ -454,7 +488,6 @@ if __name__ == '__main__':
         if args.resume_from_checkpoint != "latest":
             path = os.path.basename(args.resume_from_checkpoint)
         else:
-            # Get the most recent checkpoint
             dirs = os.listdir(args.work_dir)
             dirs = [d for d in dirs if d.startswith("checkpoint")]
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
@@ -464,21 +497,39 @@ if __name__ == '__main__':
             args.resume_from_checkpoint = None
             initial_global_step = 0
         else:
-            logger.info(f"Resuming from checkpoint {path}")
-            accelerator.load_state(os.path.join(args.work_dir, path))
+            # 兼容绝对路径和相对路径恢复
+            full_ckpt_path = os.path.join(os.path.dirname(args.resume_from_checkpoint),
+                                          path) if args.resume_from_checkpoint != "latest" else os.path.join(
+                args.work_dir, path)
+            logger.info(f"Resuming from checkpoint {full_ckpt_path}")
+            accelerator.load_state(full_ckpt_path)
             global_step = int(path.split("-")[1])
 
             initial_global_step = global_step
             first_epoch = global_step // num_update_steps_per_epoch
 
+    # ==========================================================
+    # 【新增】原生 Wandb 初始化代码 (仅在主进程中执行)
+    # ==========================================================
     timestamp = time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
     if accelerator.is_main_process:
+        current_time = datetime.datetime.now().strftime("%m%d-%H%M")
+        # 生成带配置和时间的实验名称
+        run_name = f"LongCat-Stage2-r{args.lora_rank}-{current_time}"
+
+        wandb.init(
+            project="LongCat-Image-Edit-LoRA-A100-0224",  # 你的项目名称
+            name=run_name,
+            config=vars(args)  # 把参数上传
+        )
+
         tracker_config = dict(vars(args))
         try:
             accelerator.init_trackers('sft', tracker_config)
         except Exception as e:
             logger.warning(f'get error in save config, {e}')
             accelerator.init_trackers(f"sft_{timestamp}")
+    # ==========================================================
 
     transformer, optimizer, _, _ = accelerator.prepare(
         transformer, optimizer, train_dataloader, lr_scheduler)

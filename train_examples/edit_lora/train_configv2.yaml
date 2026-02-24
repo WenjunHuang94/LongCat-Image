@@ -1,10 +1,11 @@
 # 1.Data setting
-data_txt_root: '/home/disk2/hwj/LongCat-Image/data_example/text-to-image-2M-4000.txt'  # data csv_filepath
+# 【修改 1：指向你拷贝过来的 20000 条多模态混合数据集】
+data_txt_root: '/home/disk2/hwj/LongCat-Image/merged_final_dataset/final_train_data_info.txt'
 resolution: 512
-aspect_ratio_type: 'mar_512'  # data bucketing strategy, mar_256、mar_512、mar_1024
+aspect_ratio_type: 'mar_512'
 null_text_ratio: 0.1
 dataloader_num_workers: 4
-train_batch_size: 8
+train_batch_size: 8               # 保持 A100 的 8 张暴力吞吐
 repeats: 1
 
 prompt_template_encode_prefix: "<|im_start|>system\nAs an image editing expert, first analyze the content and attributes of the input image(s). Then, based on the user's editing instructions, clearly and precisely determine how to modify the given image(s), ensuring that only the specified parts are altered and all other aspects remain consistent with the original(s).<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>"
@@ -13,24 +14,28 @@ prompt_template_encode_start_idx: 67
 prompt_template_encode_end_idx: 5
 
 # 2. Model setting
-text_tokenizer_max_length: 512  # tokenizer max len 
-pretrained_model_name_or_path: "/home/disk2/hwj/my_hf_cache/hub/models--meituan-longcat--LongCat-Image-Edit/snapshots/7b54ef423aa7854be7861600024be5c56ab7875a" # root directory of the model，with vae、transformer、scheduler eta;
-diffusion_pretrain_weight:  null # if a specified diffusion weight path is provided, load the model parameters from the current directory.
-use_dynamic_shifting: true #  scheduler dynamic shifting
-resume_from_checkpoint: latest
-  # - "latest"  # Loads most recent step checkpoint
-  # - "/path/to/checkpoint"  # Resumes from specified directory
+text_tokenizer_max_length: 512
+pretrained_model_name_or_path: "/home/disk2/hwj/my_hf_cache/hub/models--meituan-longcat--LongCat-Image-Edit/snapshots/7b54ef423aa7854be7861600024be5c56ab7875a"
+diffusion_pretrain_weight:  null
+use_dynamic_shifting: true
+
+# 【修改 2：继承第一阶段的记忆】
+# 必须写死 Stage 1 跑出来的那个效果最好的 checkpoint 的绝对路径（比如第 2400 步或 2500 步）
+# 千万别写 "latest"，否则如果换了 work_dir 它会找不到而从头训练！
+resume_from_checkpoint: '/home/disk2/hwj/LongCat-Image/output/edit_lora_model-512-v3/checkpoints-2400'
 
 # 3. Training setting
 lora_rank: 64
 use_ema: False
 ema_rate: 0.999
-mixed_precision: 'bf16'
-max_train_steps: 2500
+mixed_precision: 'bf16'           # A100 完美支持 bf16
+
+# 【修改 3：完美卡点 1 个 Epoch 的步数与防遗忘学习率】
+max_train_steps: 2500             # 20000张 ÷ 8张/步 = 刚好 2500 步跑完 1 遍！
 gradient_accumulation_steps: 1
 gradient_checkpointing: true
 gradient_clip: 1.0
-learning_rate: 2.0e-4
+learning_rate: 1.0e-4             # 【下降】从 2.0e-4 降到 1.0e-4，防止新数据把认字能力洗掉
 adam_weight_decay: 1.0e-2
 adam_epsilon: 1.0e-8
 adam_beta1: 0.9
@@ -38,10 +43,10 @@ adam_beta2: 0.999
 lr_num_cycles: 1
 lr_power: 1.0
 lr_scheduler: 'constant_with_warmup'
-lr_warmup_steps: 100
+lr_warmup_steps: 250              # 【修改】总步数的 10% 作为预热，温柔起步
 
-#4. Log setting
+# 4. Log setting
 log_interval: 10
-save_model_steps: 200
-work_dir: 'output/edit_lora_model-512-v3'
+save_model_steps: 100             # 【修改】每跑完 10% 的数据（250步）存一次盲盒
+work_dir: 'output/edit_lora_model-stage2-final-0224' # 【修改】新建一个 Stage 2 专属输出文件夹
 seed: 43

@@ -13,4 +13,4 @@ deepspeed_config_file=${project_root}/misc/accelerate_config.yaml
 
 accelerate launch  --mixed_precision bf16 --num_processes 1 --config_file ${deepspeed_config_file} \
 ${script_dir}/train_edit_lora.py \
---config ${script_dir}/train_config.yaml
+--config ${script_dir}/train_configv2.yaml
