@@ -46,5 +46,5 @@ lr_warmup_steps: 500
 #4. Log setting
 log_interval: 10
 save_model_steps: 250
-work_dir: 'output/edit_lora_model_stage2_final'
+work_dir: 'output/edit_lora_model_stage2_final-20260225'
 seed: 43
