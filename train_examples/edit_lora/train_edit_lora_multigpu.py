@@ -4,12 +4,14 @@ import time
 import warnings
 import math
 import logging
+import datetime  # <--- 【新增】用于生成 run_name
 from pathlib import Path
 from typing import Dict
 
 import argparse
 import yaml
 import torch
+import wandb  # <--- 【新增】导入 wandb
 from accelerate import dispatch_model
 from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.models import AutoencoderKL
@@ -273,6 +275,23 @@ def main():
         power=args.lr_power,
     )
 
+    # ==========================================================
+    # 【新增】Wandb 初始化与 EMA Loss 追踪状态
+    # ==========================================================
+    current_time = datetime.datetime.now().strftime("%m%d-%H%M")
+    run_name = f"LongCat-Stage2-r{args.lora_rank}-{current_time}"
+
+    wandb.init(
+        project="LongCat-Image-Edit-LoRA-0224",  # 项目名，可自行修改
+        name=run_name,
+        config=vars(args)  # 自动把你的 yaml 参数全部记入看板
+    )
+
+    ema_loss = None
+    ema_decay = 0.99
+    best_loss = float('inf')
+    # ==========================================================
+
     # 8. 训练循环
     global_step = 0
     log_buffer = LogBuffer()
@@ -427,10 +446,33 @@ def main():
                 optimizer.zero_grad(set_to_none=True)
 
                 lr = lr_scheduler.get_last_lr()[0]
+
+                # ==========================================================
+                # 【新增】Wandb 数据记录与 EMA 平滑更新
+                # ==========================================================
+                current_true_loss = (loss * grad_acc_steps).detach().item()
+
+                if ema_loss is None:
+                    ema_loss = current_true_loss
+                else:
+                    ema_loss = ema_decay * ema_loss + (1 - ema_decay) * current_true_loss
+
+                if current_true_loss < best_loss:
+                    best_loss = current_true_loss
+
+                # 推送数据到网页看板
+                wandb.log({
+                    "global_step": global_step,
+                    "train_loss": current_true_loss,  # 瞬时抖动的真实 Loss
+                    "train_loss_ema": ema_loss,  # 极其平滑的参考 Loss
+                    "best_loss": best_loss,
+                    "lr": lr,
+                    "epoch": epoch
+                })
+                # ==========================================================
+
                 bsz, ic, ih, iw = image.shape
-                logs = {"loss": (loss * grad_acc_steps).detach().item(),
-                        "aspect_ratio": (ih * 1.0 / iw)}  # 还原打印时的真实loss
-                logs["lr"] = lr
+                logs = {"loss": current_true_loss, "aspect_ratio": (ih * 1.0 / iw), "lr": lr}
 
                 log_buffer.update(logs)
                 if ((global_step + 1) % args.log_interval == 0) or (global_step == 0):
@@ -463,6 +505,7 @@ def main():
             data_time_start = time.time()
 
     logger.info("Training completed.")
+    wandb.finish()  # <--- 【新增】结束 wandb 进程
 
 
 if __name__ == "__main__":
