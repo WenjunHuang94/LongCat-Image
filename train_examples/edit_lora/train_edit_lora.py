@@ -518,7 +518,7 @@ if __name__ == '__main__':
         run_name = f"LongCat-Stage2-r{args.lora_rank}-{current_time}"
 
         wandb.init(
-            project="LongCat-Image-Edit-LoRA-A100-0224",  # 你的项目名称
+            project="LongCat-Image-Edit-LoRA-A100-0225",  # 你的项目名称
             name=run_name,
             config=vars(args)  # 把参数上传
         )

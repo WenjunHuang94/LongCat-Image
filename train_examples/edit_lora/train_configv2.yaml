@@ -1,6 +1,6 @@
 # 1.Data setting
 # 【修改 1：指向你拷贝过来的 20000 条多模态混合数据集】
-data_txt_root: '/home/disk2/hwj/LongCat-Image/merged_final_dataset/final_train_data_info.txt'
+data_txt_root: '/home/disk2/hwj/LongCat-Image/merged_final_dataset/final_train_data_info-A100.txt'
 resolution: 512
 aspect_ratio_type: 'mar_512'
 null_text_ratio: 0.1
@@ -30,8 +30,9 @@ use_ema: False
 ema_rate: 0.999
 mixed_precision: 'bf16'           # A100 完美支持 bf16
 
-# 【修改 3：完美卡点 1 个 Epoch 的步数与防遗忘学习率】
-max_train_steps: 2500             # 20000张 ÷ 8张/步 = 刚好 2500 步跑完 1 遍！
+# 【终极步数设置：跑满 2 个 Epoch】
+# 计算公式：基础记忆 2400步 + (20000张 ÷ 8张/步) × 2遍 = 7400 步
+max_train_steps: 10000
 gradient_accumulation_steps: 1
 gradient_checkpointing: true
 gradient_clip: 1.0
@@ -47,6 +48,6 @@ lr_warmup_steps: 250              # 【修改】总步数的 10% 作为预热，
 
 # 4. Log setting
 log_interval: 10
-save_model_steps: 100             # 【修改】每跑完 10% 的数据（250步）存一次盲盒
-work_dir: 'output/edit_lora_model-stage2-final-0224' # 【修改】新建一个 Stage 2 专属输出文件夹
+save_model_steps: 200             # 【修改】每跑完 10% 的数据（250步）存一次盲盒
+work_dir: 'output/edit_lora_model-stage2-final-0225' # 【修改】新建一个 Stage 2 专属输出文件夹
 seed: 43
