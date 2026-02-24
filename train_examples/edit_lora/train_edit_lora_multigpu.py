@@ -318,7 +318,7 @@ def main():
     run_name = f"LongCat-Stage2-r{args.lora_rank}-{current_time}"
 
     wandb.init(
-        project="LongCat-Image-Edit-LoRA-0224",  # 项目名，可自行修改
+        project="LongCat-Image-Edit-LoRA-0225",  # 项目名，可自行修改
         name=run_name,
         config=vars(args)  # 自动把你的 yaml 参数全部记入看板
     )
