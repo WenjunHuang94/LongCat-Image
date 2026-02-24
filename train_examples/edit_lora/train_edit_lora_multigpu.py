@@ -329,7 +329,7 @@ def main():
     # ==========================================================
 
     # 8. 训练循环
-    global_step = 0
+    # global_step = 0
     log_buffer = LogBuffer()
     last_tic = time.time()
     grad_acc_steps = getattr(args, "gradient_accumulation_steps", 1)
