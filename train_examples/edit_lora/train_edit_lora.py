@@ -22,7 +22,7 @@ from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.training_utils import EMAModel
 from diffusers.utils.import_utils import is_xformers_available
 from transformers import AutoTokenizer, AutoModel, AutoProcessor
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, load_peft_weights, set_peft_model_state_dict
 
 from train_dataset import build_dataloader
 from longcat_image.models import LongCatImageTransformer2DModel
@@ -381,6 +381,45 @@ if __name__ == '__main__':
     transformer = get_peft_model(transformer, lora_config)
     transformer.print_trainable_parameters()
 
+    # ==========================================================
+    # TODO: 【极其重要！防踩坑警告】千万不要把这段权重加载逻辑移到后面的 load_model_hook 里！
+    #
+    # ❓ 为什么必须在这里（DeepSpeed 接管前）提前加载权重？
+    # 1. 机制冲突：我们启用了 DeepSpeed ZeRO 优化，它会在下面的 `accelerator.prepare()` 时，把模型“大卸八块”（参数切片）分发给各个显卡。
+    # 2. 静默失忆：如果等 DeepSpeed 切碎模型后，再在 Hook 中试图用 `set_peft_model_state_dict` 强塞完整的 safetensors 权重，会因为 Tensor 形状对不上（Shape Mismatch）导致框架“静默丢弃”权重。模型会带着随机初始化的垃圾数值去训练，直接崩坏！
+    # 🌟 铁律：必须在模型还是“完整形态”时，提前完成“灵魂注入”（此时），然后再交由 DeepSpeed 去切片分布式训练！
+    # ==========================================================
+
+    # ==========================================================
+    # 🌟 【关键修复 1】：在 DeepSpeed 接管前，提前注入历史 LoRA 权重
+    # ==========================================================
+    if args.resume_from_checkpoint:
+        # 提前解析真实的 Checkpoint 路径
+        if args.resume_from_checkpoint != "latest":
+            early_ckpt_path = os.path.basename(args.resume_from_checkpoint)
+            full_early_ckpt_path = os.path.join(os.path.dirname(args.resume_from_checkpoint), early_ckpt_path)
+        else:
+            dirs = os.listdir(args.work_dir)
+            dirs = [d for d in dirs if d.startswith("checkpoint")]
+            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+            full_early_ckpt_path = os.path.join(args.work_dir, dirs[-1]) if len(dirs) > 0 else None
+
+        if full_early_ckpt_path and os.path.exists(full_early_ckpt_path):
+            logger.info(f"🔎 [DeepSpeed 破局] 正在提前从 {full_early_ckpt_path} 提取历史记忆...")
+            try:
+                # 兼容旧版本的 transformer 子目录，或者直接读根目录
+                target_lora_dir = full_early_ckpt_path
+                if not os.path.exists(os.path.join(target_lora_dir, "adapter_model.safetensors")):
+                    target_lora_dir = os.path.join(full_early_ckpt_path, "transformer")
+
+                adapters_weights = load_peft_weights(target_lora_dir)
+                set_peft_model_state_dict(transformer, adapters_weights)
+                logger.info(f"✅ [成功] 完美在 DeepSpeed 介入前，注入了 10000 步的毕生功力！")
+            except Exception as e:
+                logger.error(f"❌ 提前注入失败: {e}")
+                sys.exit(1)
+    # ==========================================================
+
     total_trainable_params = sum(p.numel() for p in transformer.parameters() if p.requires_grad)
     logger.info(f">>>>>> total_trainable_params: {total_trainable_params}")
 
@@ -420,19 +459,16 @@ if __name__ == '__main__':
     def save_model_hook(models, weights, output_dir):
         if accelerator.is_main_process:
             for i, model in enumerate(models):
-                model.save_pretrained(os.path.join(output_dir, "transformer"))
+                # ✅ 完美修正：直接存在根目录，和 load_model_hook 保持绝对一致！
+                model.save_pretrained(output_dir)
                 if len(weights) != 0:
                     weights.pop()
 
 
     def load_model_hook(models, input_dir):
         while len(models) > 0:
-            model = models.pop()
-            load_model = LongCatImageTransformer2DModel.from_pretrained(
-                input_dir, subfolder="transformer")
-            model.register_to_config(**load_model.config)
-            model.load_state_dict(load_model.state_dict())
-            del load_model
+            models.pop()
+            # 🧠 假装加载过了：把模型弹出来，告诉 Accelerate "别碰模型了，你去加载优化器就行"
 
 
     accelerator.register_save_state_pre_hook(save_model_hook)
@@ -518,7 +554,7 @@ if __name__ == '__main__':
         run_name = f"LongCat-Stage2-r{args.lora_rank}-{current_time}"
 
         wandb.init(
-            project="LongCat-Image-Edit-LoRA-A100-0225",  # 你的项目名称
+            project="LongCat-Image-Edit-LoRA-A100-0302V1",  # 你的项目名称
             name=run_name,
             config=vars(args)  # 把参数上传
         )
