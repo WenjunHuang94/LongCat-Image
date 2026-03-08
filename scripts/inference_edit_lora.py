@@ -11,7 +11,7 @@ if __name__ == '__main__':
 
     # 1. 设置模型路径和 LoRA 路径
     model_path = "/home/disk2/hwj/my_hf_cache/hub/models--meituan-longcat--LongCat-Image-Edit/snapshots/7b54ef423aa7854be7861600024be5c56ab7875a"  # 或者本地路径，如 "./weights/LongCat-Image-Edit"
-    lora_ckpt_path = "/home/disk2/hwj/LongCat-Image/output/edit_lora_model/checkpoints-500"  # TODO: 注意这里填绝对路径避免出错，你的 LoRA 权重路径
+    lora_ckpt_path = "/home/disk2/hwj/LongCat-Image/output/edit_lora_model-stage2-final-0225/checkpoints-10000"  # TODO: 注意这里填绝对路径避免出错，你的 LoRA 权重路径
     
     # 2. 加载基础 transformer 模型
     print(f"Loading base transformer from {model_path}...")
@@ -46,20 +46,20 @@ if __name__ == '__main__':
 
     # 5. 进行推理
     print("Running inference...")
-    img = Image.open('/home/disk2/hwj/LongCat-Image/data_example/origin_images/image_000000.JPEG').convert('RGB')  # 你的输入图片路径
+    img = Image.open('/home/disk2/hwj/LongCat-Image/text-to-image-2M-export_4000/input/image_000000.JPEG').convert('RGB')  # 你的输入图片路径
     prompt = 'Generate a realistic image based on the text description in the image'  # 你的编辑指令
     
     image = pipe(
         img,
         prompt,
         negative_prompt='',
-        guidance_scale=4.5,  # <--- TODO:【修改】这里从 4.5 提高到了 7.5
+        guidance_scale=4.5,  # <--- TODO:这里可以考虑从 4.5 提高到 7.5
         num_inference_steps=50,
         num_images_per_prompt=1,
         generator=torch.Generator("cpu").manual_seed(43)
     ).images[0]
 
     # 6. 保存结果
-    output_path = './edit_lora_example-500V2.png'
+    output_path = './image_000000-res-V6-1800.png'
     image.save(output_path)
     print(f"✅ Inference completed! Result saved to {output_path}")
